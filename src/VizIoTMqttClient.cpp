@@ -7,7 +7,7 @@
 */
 
 #include <Arduino.h>
-#include "VizIoTMqttClient.h";
+#include "VizIoTMqttClient.h"
 
 
 VizIoTMqttClient::VizIoTMqttClient(PubSubClient mqttClient) {
@@ -69,6 +69,7 @@ bool VizIoTMqttClient::connect() {
       delay(5000);
     }
   }
+  return false;
 }
 
 void VizIoTMqttClient::closeConnection() {
@@ -125,6 +126,7 @@ bool VizIoTMqttClient::subscribe() {
   } else {
     return false;
   }
+  return false;
 }
 bool VizIoTMqttClient::connectToBroker() {
   if (this->_keyAndPassIsOk == true && !this->connected()) {

@@ -1,46 +1,56 @@
-
-
 #include <ESP8266WiFi.h>
-
+#include <Ticker.h>
 #include <VizIoTMqttClient.h>
 
-//Адрес ноги со светодиодом
+//Address of the leg with LED
 #define LED_ESP 2
 
-//ssid и пароль доступа для подключения к WI-FI
+//ssid and access password for WI-FI connection
 const char* ssid = "__________";
-const char* password = "_____________";
+const char* password = "__________";
 
-//Зарегистрируйтесь в VizIoT.com и создайте устройство
-//Ключ и пароль доступа VizIoT Устройства (можно узнать в настройках устройства)
-String VizIoT_Device_key = "______________";
-String VizIoT_Device_pass = "_________________";
+//Register to VizIoT.com and create a device
+//VizIoT Device access key and password (can be found in the device settings)
+String VizIoT_Device_key = "__________";
+String VizIoT_Device_pass = "__________";
 
 WiFiClient espClient;
 PubSubClient clientMQTT(espClient);
 VizIoTMqttClient clientVizIoT(clientMQTT);
 long lastMsg = 0;
-char msg[50];
+char msg[1000];
 byte statusLed = 0;
 
+
+/*---------- Sending data ----------------*/
+Ticker sender;
+bool isSendDataToServer;
+void SendDataToServer() {isSendDataToServer = true;} 
+#define INTERVAL_SEND_DATA 300 //Sending data every 5 minutes (5*60=300)
+/*---------- Sending data ----------------*/
+
+
+
 void setup()
-{
-  //разрешаем управлять светодиодом
+{ 
+  //enable LED control
   pinMode(LED_ESP, OUTPUT);
   digitalWrite(LED_ESP, HIGH);
-  //Включаем вывод информации в Serial Monitor
+  
+  //Enable information output in Serial Monitor
   Serial.begin(9600);
-  //Подключаемся к WI-FI
+  
+  //Connecting to WI-FI
   setup_wifi();
-
-  clientVizIoT.config(VizIoT_Device_key, VizIoT_Device_pass, "192.168.0.112", 48651);
+  
+  clientVizIoT.config(VizIoT_Device_key, VizIoT_Device_pass);
   clientVizIoT.listenCommand(callback);
-
+  sender.attach(INTERVAL_SEND_DATA, SendDataToServer); // Create event of sending data every INTERVAL_SEND_DATA sec
 }
 
-//Обработка события получения данных
+//Processing of a data acquisition event
 void callback(String parameter, byte value) {
-   Serial.print("Публикация сообщения: parameter");
+   Serial.print("Publication of a message: parameter");
    Serial.print(parameter);
    Serial.print("value ");
     Serial.println(value);
@@ -54,7 +64,7 @@ void callback(String parameter, byte value) {
     }
 
     snprintf(msg, sizeof(msg), "{\"led\":\"%c\"}", (statusLed) ? '1' : '0');
-    Serial.print("Публикация сообщения: ");
+    Serial.print("Publishing a message: ");
     Serial.println(msg);
 
     clientVizIoT.sendJsonString(String(msg));
@@ -65,7 +75,7 @@ void callback(String parameter, byte value) {
 void setup_wifi() {
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
-    //Ожидает подключения к WI-FI
+    //Waiting for WI-FI connection
     delay(500);
     Serial.print(".");
   }
@@ -77,15 +87,15 @@ void setup_wifi() {
 
 void loop()
 {
-  //необходим для обработки входящих сообщения и поддержания подключения к Брокеру
+  //is required to process incoming messages and maintain connection to the Broker
   clientVizIoT.loop();
 
-  //Отправка уровня WI-FI сигнала на сервер каждую минуту
-  long now = millis();
-  if (now - lastMsg > 60000) {
-    lastMsg = now;
+  if (isSendDataToServer) {
+    isSendDataToServer = false; 
+    
+
     snprintf (msg, sizeof(msg), "{\"rssi\":\"%i\",\"led\":\"%c\"}", WiFi.RSSI(), (statusLed) ? '1' : '0');
-    Serial.print("Публикация сообщения: ");
+    Serial.print("Publishing a message: ");
     Serial.println(msg);
     clientVizIoT.sendJsonString(String(msg));
   }

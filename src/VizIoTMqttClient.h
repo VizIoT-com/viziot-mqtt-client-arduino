@@ -6,7 +6,7 @@
    @date       November  2018
 */
 #ifndef VizIoTMqttClient_h
-#define VizIoTMqttClient_h,
+#define VizIoTMqttClient_h
 
 #if defined(ARDUINO) && ARDUINO >= 100
   #include "Arduino.h"
