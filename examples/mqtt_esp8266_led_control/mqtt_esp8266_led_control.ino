@@ -1,102 +1,102 @@
 #include <ESP8266WiFi.h>
-#include <Ticker.h>
 #include <VizIoTMqttClient.h>
+#include <ArduinoJson.h>
+#include <Ticker.h>
 
-//Address of the leg with LED
-#define LED_ESP 2
+// Wi-Fi credentials
+const char* WIFI_SSID = "your_wifi_ssid";
+const char* WIFI_PASSWORD = "your_wifi_password";
 
-//ssid and access password for WI-FI connection
-const char* ssid = "__________";
-const char* password = "__________";
+// VizIoT credentials
+const char* VIZIOT_DEVICE_KEY = "your_16_char_username";
+const char* VIZIOT_DEVICE_PASS = "your_20_char_password";
 
-//Register to VizIoT.com and create a device
-//VizIoT Device access key and password (can be found in the device settings)
-String VizIoT_Device_key = "__________";
-String VizIoT_Device_pass = "__________";
+// LED pin
+#define LED_PIN D4
 
-WiFiClient espClient;
-PubSubClient clientMQTT(espClient);
-VizIoTMqttClient clientVizIoT(clientMQTT);
-long lastMsg = 0;
-char msg[1000];
-byte statusLed = 0;
+// Create MQTT client instance
+VizIoTMqttClient mqttClient(VIZIOT_DEVICE_KEY, VIZIOT_DEVICE_PASS);
 
+// LED state
+bool ledState = false;
 
-/*---------- Sending data ----------------*/
+// Timer for sending data to VizIoT MQTT Broker
 Ticker sender;
-bool isSendDataToServer;
-void SendDataToServer() {isSendDataToServer = true;} 
-#define INTERVAL_SEND_DATA 300 //Sending data every 5 minutes (5*60=300)
-/*---------- Sending data ----------------*/
+bool isSendDataToServer = false; // Send data only after timer triggers
+void SendDataToServer() { isSendDataToServer = true; }
+#define INTERVAL_SEND_DATA 300 // Send data every 5 minutes (5*60=300)
 
+// Callback for received parameters
+void onParameterReceived(const char* paramName, const char* value) {
+  Serial.print("Received parameter: ");
+  Serial.print(paramName);
+  Serial.print(" = ");
+  Serial.println(value);
 
-
-void setup()
-{ 
-  //enable LED control
-  pinMode(LED_ESP, OUTPUT);
-  digitalWrite(LED_ESP, HIGH);
-  
-  //Enable information output in Serial Monitor
-  Serial.begin(9600);
-  
-  //Connecting to WI-FI
-  setup_wifi();
-  
-  clientVizIoT.config(VizIoT_Device_key, VizIoT_Device_pass);
-  clientVizIoT.listenCommand(callback);
-  sender.attach(INTERVAL_SEND_DATA, SendDataToServer); // Create event of sending data every INTERVAL_SEND_DATA sec
-}
-
-//Processing of a data acquisition event
-void callback(String parameter, byte value) {
-   Serial.print("Publication of a message: parameter");
-   Serial.print(parameter);
-   Serial.print("value ");
-    Serial.println(value);
-  if (parameter.compareTo("led") == 0) {
-    if (value == 1) {
-      statusLed = 1;
-      digitalWrite(LED_ESP, LOW);
-    } else {
-      statusLed = 0;
-      digitalWrite(LED_ESP, HIGH);
-    }
-
-    snprintf(msg, sizeof(msg), "{\"led\":\"%c\"}", (statusLed) ? '1' : '0');
-    Serial.print("Publishing a message: ");
-    Serial.println(msg);
-
-    clientVizIoT.sendJsonString(String(msg));
+  if (strcmp(paramName, "led") == 0) {
+    bool newState = (strcmp(value, "1") == 0);
+    ledState = newState;
+    digitalWrite(LED_PIN, ledState ? LOW : HIGH); // Active LOW
+    Serial.print("LED state updated to: ");
+    Serial.println(ledState ? "ON" : "OFF");
+    sendPacketToVizIoT();
   }
 }
 
-//Функция подключения к WI-FI
-void setup_wifi() {
-  WiFi.begin(ssid, password);
+void sendPacketToVizIoT() {
+  DynamicJsonDocument doc(256); // Reduced size for small JSON
+  JsonObject obj = doc.to<JsonObject>();
+  obj["led"] = ledState ? 1 : 0;
+  obj["wifi_rssi"] = WiFi.RSSI();
+
+  String jsonStr;
+  serializeJson(doc, jsonStr);
+
+  if (mqttClient.publishJson(jsonStr.c_str())) {
+    Serial.println("Published JSON: " + jsonStr);
+  } else {
+    Serial.println("Failed to publish JSON");
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // LED off (active LOW)
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("Connecting to Wi-Fi...");
   while (WiFi.status() != WL_CONNECTED) {
-    //Waiting for WI-FI connection
-    delay(500);
+    delay(1000);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.println("WiFi подключен");
+  Serial.println("Connected to Wi-Fi");
+
+  mqttClient.begin();
+  mqttClient.setParameterCallback(onParameterReceived);
+
+  sender.attach(INTERVAL_SEND_DATA, SendDataToServer);
+  SendDataToServer(); // Send a data packet as soon as it connects to the broker
 }
 
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    WiFi.reconnect();
+    delay(1000);
+    return;
+  }
 
+  mqttClient.poll();
 
-void loop()
-{
-  //is required to process incoming messages and maintain connection to the Broker
-  clientVizIoT.loop();
+  if (!mqttClient.isConnected()) {
+    mqttClient.reconnect();
+  }
 
   if (isSendDataToServer) {
-    isSendDataToServer = false; 
-    
-
-    snprintf (msg, sizeof(msg), "{\"rssi\":\"%i\",\"led\":\"%c\"}", WiFi.RSSI(), (statusLed) ? '1' : '0');
-    Serial.print("Publishing a message: ");
-    Serial.println(msg);
-    clientVizIoT.sendJsonString(String(msg));
+    isSendDataToServer = false;
+    sendPacketToVizIoT();
   }
+
+  delay(100);
 }

@@ -1,19 +1,33 @@
 {
-    "name": "VizIoTMqttClient",
-    "keywords": "ethernet, mqtt, m2m, iot, viziot",
-    "description": "A client library for connect to MQTT server VizIoT.com. ",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/VizIoT-com/viziot-mqtt-client-arduino/upload"
-    },
-    "version": "1.0.1",
-    "examples": "examples/*/*.ino",
-    "frameworks": "arduino",
-    "platforms": [
-        "atmelavr",
-        "espressif"
-    ],
-    "dependencies": {
-        "pubsubclient": "^2.7"
+  "name": "VizIoTMqttClient",
+  "version": "2.0.0",
+  "description": "An Arduino library for connecting to the VizIoT MQTT broker, publishing large JSON data, and subscribing to parameter updates on multiple platforms including ESP8266, ESP32, SAMD, and more.",
+  "keywords": "mqtt, viziot, esp8266, esp32, samd, json, arduino",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VizIoT-com/viziot-mqtt-client-arduino.git"
+  },
+  "authors": [
+    {
+      "name": "VizIoT",
+	  "email": "viziot.com@gmail.com",
+      "url": "https://viziot.com",
+      "maintainer": true
     }
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/VizIoT-com/viziot-mqtt-client-arduino",
+  "dependencies": {
+    "arduino-libraries/ArduinoMqttClient": "^0.1.8",
+    "bblanchon/ArduinoJson": "^7.4.1"
+  },
+  "frameworks": "arduino",
+  "platforms": [
+    "espressif8266",
+    "espressif32",
+    "samd",
+    "megaavr",
+    "stm32",
+    "portenta"
+  ]
 }

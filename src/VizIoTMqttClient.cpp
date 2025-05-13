@@ -1,176 +1,120 @@
 /**
-   @file       VizIoTMqttClient.h
-   @author     Trunov Alexandr
+   @file       VizIoTMqttClient.cpp
+   @author     VizIoT.com
    @license    This project is released under the MIT License (MIT)
-   @copyright  Copyright (c) 2018 Trunov Alexandr
-   @date       November  2018
+   @copyright  Copyright (c) 2018-2025 VizIoT.com
 */
 
-#include <Arduino.h>
 #include "VizIoTMqttClient.h"
 
+// Initialize static instance pointer
+VizIoTMqttClient* VizIoTMqttClient::_instance = nullptr;
 
-VizIoTMqttClient::VizIoTMqttClient(PubSubClient mqttClient) {
-  this->_mqttClient = mqttClient;
-  this->_keyAndPassIsOk = false;
-
-  this->_isListenCommands = false;
-  //Устанавливаем обработчик получения данных
-  this->_mqttClient.setCallback([this] (char* topic, byte * payload, unsigned int length) {
-    this->_callback(topic, payload, length);
-  });
+// Constructor: Initialize MQTT parameters
+VizIoTMqttClient::VizIoTMqttClient(const char* DEVICE_KEY, const char* DEVICE_PASS, const char* mqtt_host, int mqtt_port, unsigned short tx_payload_size) {
+  _mqtt_host = mqtt_host;
+  _mqtt_port = mqtt_port;
+  
+  // Limit buffer size
+  unsigned short temp_tx_payload_size = tx_payload_size < 4096 ? tx_payload_size : 4096;
+  _tx_payload_size = temp_tx_payload_size > 128 ? temp_tx_payload_size : 128;
+  
+  _DEVICE_KEY = DEVICE_KEY;
+  _DEVICE_PASS = DEVICE_PASS;
+  _clientId = String("arduinoClient-") + DEVICE_KEY;
+  _publishTopic = String("/devices/") + _DEVICE_KEY + "/packet";
+  _subscribeTopic = String("/devices/") + _DEVICE_KEY + "/param/+";
+  _paramCallback = nullptr;
+  _mqttClient = new MqttClient(_wifiClient);
+  _instance = this;
 }
 
-
-byte VizIoTMqttClient::config(String key, String pass) {
-  return this->config(key, pass, DEFAULT_HOST, DEFAULT_PORT);
+// Destructor: Clean up MQTT client
+VizIoTMqttClient::~VizIoTMqttClient() {
+  delete _mqttClient;
+  _instance = nullptr;
 }
 
-
-byte VizIoTMqttClient::config(String deviceKey, String devicePass, String mqttHost, int mqttPort) {
-
-  //Устанавливаем адрес MQTT брокера
-  this->_host = mqttHost;
-  this->_port = mqttPort;
-  this->_mqttClient.setServer(this->_host.c_str(), this->_port);
-
-  deviceKey.trim();
-  deviceKey.toUpperCase();
-  devicePass.trim();
-
-  if (deviceKey.length() == 16 && devicePass.length() == 20) {
-    this->_deviceKey = deviceKey;
-    this->_devicePass = devicePass;
-    this->_topicForPublish = String("/devices/") + _deviceKey + "/packet";
-    this->_topicForSubscribe = String("/devices/") + _deviceKey + "/param/+";
-    this->_clientId = "arduinoClient-" + _deviceKey;
-    this->_keyAndPassIsOk = true;
-    return VIZIOT_CONFIG_OK;
-  } else {
-    this->_keyAndPassIsOk = false;
-    return VIZIOT_KEY_OR_PASS_NOT_CORRECT_FORMAT;
-  }
+// Initialize MQTT client
+void VizIoTMqttClient::begin() {
+  _mqttClient->setId(_clientId.c_str());
+  _mqttClient->setUsernamePassword(_DEVICE_KEY, _DEVICE_PASS);
+  _mqttClient->onMessage(_staticOnMqttMessage);
+  _mqttClient->setTxPayloadSize(_tx_payload_size);
+  _connectToMqtt();
 }
 
-bool VizIoTMqttClient::connected() {
-  return this->_mqttClient.connected();
-}
-
-bool VizIoTMqttClient::connect() {
-  while (this->connected() == false) {
-    // Попытка подключения
-    if (this->connectToBroker()) {
-      //Подключен
-      this->subscribe();
-      return true;
+// Connect to MQTT server
+void VizIoTMqttClient::_connectToMqtt() {
+  if (!_mqttClient->connected()) {
+    Serial.println("Connecting to MQTT...");
+    if (_mqttClient->connect(_mqtt_host, _mqtt_port)) {
+      Serial.println("Connected to MQTT");
+      _mqttClient->subscribe(_subscribeTopic);
     } else {
-      //не смогли, статус=        this->_mqttClient.state()
-      //попытка подключится через 5 секунд//
-      delay(5000);
+      Serial.print("Failed to connect to MQTT, error: ");
+      Serial.println(_mqttClient->connectError());
     }
   }
-  return false;
 }
 
-void VizIoTMqttClient::closeConnection() {
-  if (this->connected()) {
-    this->_mqttClient.disconnect();
+// Static callback to forward to instance method
+void VizIoTMqttClient::_staticOnMqttMessage(int messageSize) {
+  if (_instance) {
+    _instance->_onMqttMessage(messageSize);
   }
 }
 
-bool VizIoTMqttClient::sendJsonString(String jsonString) {
-  while (!this->connected()) {
-    this->reconnect();
-  }
+// Handle incoming MQTT messages
+void VizIoTMqttClient::_onMqttMessage(int messageSize) {
+  String topic = _mqttClient->messageTopic();
+  String paramName = topic.substring(topic.lastIndexOf('/') + 1);
+  char payload[256]; // Reduced size for small incoming messages
+  int len = _mqttClient->read((unsigned char*)payload, 255);
+  payload[len] = '\0';
 
-  if (jsonString.length() > 6) {
-    return this->_mqttClient.publish(this->_topicForPublish.c_str(), jsonString.c_str());
-  } else {
-    return false; // jsonString явно не JSON
+  if (_paramCallback) {
+    _paramCallback(paramName.c_str(), payload);
   }
-
 }
 
+// Publish pre-formed JSON string
+bool VizIoTMqttClient::publishJson(const char* jsonString) {
+  if (!_mqttClient->connected()) {
+    return false;
+  }
+
+  DynamicJsonDocument doc(1024);
+  DeserializationError error = deserializeJson(doc, jsonString);
+  if (error) {
+    Serial.print("Invalid JSON: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+
+  _mqttClient->beginMessage(_publishTopic);
+  _mqttClient->print(jsonString);
+  return _mqttClient->endMessage();
+}
+
+// Set callback for parameter updates
+void VizIoTMqttClient::setParameterCallback(void (*callback)(const char* paramName, const char* value)) {
+  _paramCallback = callback;
+}
+
+// Check if connected to MQTT
+bool VizIoTMqttClient::isConnected() {
+  return _mqttClient->connected();
+}
+
+// Reconnect to MQTT
 void VizIoTMqttClient::reconnect() {
-  while (!this->connected()) {
-    //    Попытка подключения MQTT:
-    // Попытка подключения
-    if (this->connectToBroker()) {
-      this->subscribe();
-    } else {
-      //      не смогли, статус= this->_mqttClient.state()
-      //       попытка подключится через 5 секунд
-      delay(5000);
-    }
+  if (!_mqttClient->connected()) {
+    _connectToMqtt();
   }
 }
 
-void VizIoTMqttClient::loop() {
-  //Проверяем подключение к Брокеру
-  if (!this->connected()) {
-    this->reconnect();
-  }
-  this->_mqttClient.loop();
+// Poll MQTT client
+void VizIoTMqttClient::poll() {
+  _mqttClient->poll();
 }
-bool VizIoTMqttClient::subscribe() {
-  if (this->connected()) {
-    if (this->_isListenCommands) {
-      if (this->_mqttClient.subscribe(this->_topicForSubscribe.c_str())) {
-        //Подписался на топик _topicForSubscribe
-        return true;
-      } else {
-        //Ошибка! не смог подписатся на топик  _topicForSubscribe
-        return false;
-      }
-    }
-  } else {
-    return false;
-  }
-  return false;
-}
-bool VizIoTMqttClient::connectToBroker() {
-  if (this->_keyAndPassIsOk == true && !this->connected()) {
-    return this->_mqttClient.connect(this->_clientId.c_str(), this->_deviceKey.c_str(), this->_devicePass.c_str());
-  } else {
-    return false;
-  }
-}
-//Обработка события получения данных
-void VizIoTMqttClient::_callback(char* topic, byte* payload, unsigned int length) {
-  //          if (compareTo(topic, (char*)topicLed.c_str())) {
-  //            if ((char)payload[0] == '1') {
-  //              statusLed = 1;
-  //              digitalWrite(LED_ESP, LOW);
-  //            } else {
-  //              statusLed = 0;
-  //              digitalWrite(LED_ESP, HIGH);
-  //            }
-  //          snprintf(msg, sizeof(msg), "{\"led\":\"%c\"}", (char)payload[0]);
-  //          this->_mqttClient.publish(topicSendData.c_str(), msg);
-  //          }
-  //  this->callbackUser(String parameter, String value);
-  String topicString = String(topic);
-  byte value = ((char)payload[0] == '1') ? 1 : 0 ;
-  int indexLastSlash = topicString.lastIndexOf('/');
-  String parameter = "";
-  if (indexLastSlash != -1) {
-    parameter = topicString.substring(indexLastSlash + 1);
-  }
-  if (this->_isListenCommands && parameter.length() > 0){
-    this->callbackUser(parameter, value);
-  }
-}
-bool VizIoTMqttClient::listenCommand(VIZIOT_CALLBACK_SIGNATURE) {
-  this->_isListenCommands = true;
-  this->callbackUser = callbackUser;
-  if(this->connected()) {
-    return this->subscribe();
-  }else{
-    return false;
-  }
-}
-
-
-
-
-
